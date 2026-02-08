@@ -1,26 +1,669 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0f0609;
+  --foreground: #f4e4e6;
+  --ink-muted: #d8b2b9;
+  --panel-bg: rgba(16, 8, 11, 0.72);
+  --panel-border: rgba(232, 118, 138, 0.32);
+  --accent: #d34d63;
+  --accent-strong: #8f2038;
+  --danger: #ff6f88;
+  --shadow: 0 18px 45px rgba(0, 0, 0, 0.38);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-heading);
+  --font-mono: var(--font-plex-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-heading), sans-serif;
+  margin: 0;
+}
+
+.prisme-shell {
+  min-height: 100dvh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+.prisme-background,
+.mars-fallback {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+.mars-fallback {
+  background:
+    radial-gradient(circle at 24% 18%, rgba(204, 54, 88, 0.36), transparent 46%),
+    radial-gradient(circle at 76% 64%, rgba(152, 31, 52, 0.32), transparent 58%),
+    linear-gradient(145deg, #260a12 0%, #16080c 46%, #11060a 100%);
+}
+
+.prisme-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 24% 15%, rgba(233, 101, 131, 0.16), transparent 43%),
+    radial-gradient(circle at 74% 76%, rgba(188, 59, 90, 0.2), transparent 44%),
+    linear-gradient(
+      180deg,
+      rgba(8, 5, 6, 0.34) 0%,
+      rgba(7, 4, 6, 0.66) 42%,
+      rgba(5, 3, 4, 0.91) 100%
+    );
+  pointer-events: none;
+}
+
+.prisme-content {
+  position: relative;
+  z-index: 2;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 1.25rem 3rem;
+}
+
+.prisme-stage {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+.prisme-stage-core {
+  position: relative;
+  width: min(46vw, 340px);
+  aspect-ratio: 1 / 1;
+  border-radius: 999px;
+  background: radial-gradient(circle at center, rgba(178, 45, 76, 0.15), transparent 65%);
+  filter: drop-shadow(0 0 28px rgba(182, 48, 82, 0.32));
+}
+
+.prisme-stage-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(236, 146, 165, 0.25);
+}
+
+.prisme-stage-ring-outer {
+  transform: scale(1.02);
+  animation: prismePulseOuter 4.8s ease-in-out infinite;
+}
+
+.prisme-stage-ring-mid {
+  inset: 13%;
+  border-color: rgba(226, 103, 129, 0.34);
+  animation: prismePulseMid 3.8s ease-in-out infinite;
+}
+
+.prisme-stage-ring-inner {
+  inset: 29%;
+  border-color: rgba(236, 169, 182, 0.45);
+  animation: prismePulseInner 2.7s ease-in-out infinite;
+}
+
+.prisme-stage-drift {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background:
+    conic-gradient(
+      from 90deg,
+      rgba(214, 73, 108, 0.05),
+      rgba(235, 145, 172, 0.32),
+      rgba(171, 50, 82, 0.08),
+      rgba(214, 73, 108, 0.05)
+    );
+  filter: blur(18px);
+  animation: prismeDrift 7.2s linear infinite;
+}
+
+.prisme-stage-pulse {
+  position: absolute;
+  bottom: 2.2rem;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: 1px solid rgba(230, 150, 168, 0.3);
+  background: rgba(27, 10, 16, 0.5);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+
+.prisme-stage-pulse:hover {
+  transform: translateY(-1px);
+  border-color: rgba(240, 181, 193, 0.54);
+}
+
+.prisme-stage-pulse span {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(239, 181, 194, 0.76);
+  box-shadow: 0 0 18px rgba(239, 167, 181, 0.5);
+  animation: prismePulseDot 1.9s ease-in-out infinite;
+}
+
+.prisme-reveal {
+  opacity: clamp(0, calc(var(--reveal-progress, 0) * 1.15), 1);
+  transform: translateY(calc((1 - var(--reveal-progress, 0)) * 52px));
+  transition: opacity 480ms ease, transform 680ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  padding-bottom: 0.4rem;
+}
+
+.prisme-reveal-item {
+  opacity: clamp(0, calc((var(--reveal-progress, 0) - 0.02) * 1.35), 1);
+  transform: translateY(calc((1 - var(--reveal-progress, 0)) * 26px));
+  transition: opacity 520ms ease, transform 760ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.prisme-header {
+  margin-bottom: 1.2rem;
+  max-width: 760px;
+}
+
+.prisme-eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+}
+
+.prisme-header h1 {
+  margin: 0.3rem 0 0;
+  font-size: clamp(2rem, 6vw, 4.8rem);
+  letter-spacing: 0.01em;
+  line-height: 0.94;
+  font-weight: 700;
+}
+
+.prisme-subhead {
+  margin: 0.9rem 0 1.3rem;
+  max-width: 65ch;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+
+.prisme-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.prisme-invite-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
+
+.prisme-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.prisme-panel {
+  grid-column: span 6;
+  border: 1px solid var(--panel-border);
+  border-radius: 22px;
+  background: linear-gradient(175deg, rgba(34, 13, 17, 0.84), rgba(14, 7, 10, 0.84));
+  backdrop-filter: blur(8px);
+  box-shadow: var(--shadow);
+  padding: 1.05rem;
+}
+
+.prisme-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.prisme-panel-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.01em;
+}
+
+.prisme-panel-head span {
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+}
+
+.prisme-panel-copy {
+  margin: 0.65rem 0 0.75rem;
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+}
+
+.prisme-package-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.prisme-package {
+  background: rgba(17, 8, 11, 0.82);
+  border: 1px solid rgba(233, 136, 157, 0.22);
+  border-radius: 14px;
+  color: inherit;
+  text-align: left;
+  padding: 0.7rem 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+  cursor: pointer;
+}
+
+.prisme-package:hover {
+  transform: translateY(-1px);
+  border-color: rgba(239, 167, 183, 0.5);
+}
+
+.prisme-package.is-selected {
+  background: linear-gradient(180deg, rgba(123, 38, 64, 0.62), rgba(38, 14, 21, 0.92));
+  border-color: rgba(226, 107, 132, 0.82);
+}
+
+.prisme-package h3 {
+  margin: 0 0 0.17rem;
+  font-size: 0.98rem;
+}
+
+.prisme-package p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.82rem;
+}
+
+.prisme-price {
+  font-family: var(--font-plex-mono), monospace;
+  font-size: 0.9rem;
+  color: #ffd0da;
+}
+
+.prisme-chat {
+  display: grid;
+  gap: 0.62rem;
+  max-height: 256px;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.prisme-chat-empty {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.91rem;
+  line-height: 1.42;
+}
+
+.prisme-msg {
+  max-width: 94%;
+  border-radius: 13px;
+  padding: 0.58rem 0.7rem;
+  line-height: 1.35;
+  font-size: 0.9rem;
+  border: 1px solid rgba(236, 143, 164, 0.24);
+}
+
+.prisme-msg p {
+  margin: 0;
+}
+
+.prisme-msg.assistant {
+  background: rgba(216, 92, 123, 0.15);
+}
+
+.prisme-msg.user {
+  margin-left: auto;
+  background: rgba(102, 32, 53, 0.62);
+}
+
+.prisme-controls {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.prisme-controls label,
+.prisme-controls fieldset {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+}
+
+.prisme-controls select,
+.prisme-controls input,
+.prisme-controls textarea,
+.prisme-modal-card input {
+  background: rgba(13, 8, 10, 0.82);
+  color: var(--foreground);
+  border: 1px solid rgba(235, 150, 170, 0.34);
+  border-radius: 11px;
+  font-size: 0.9rem;
+  font-family: var(--font-plex-mono), monospace;
+  padding: 0.56rem 0.6rem;
+}
+
+.prisme-controls textarea {
+  resize: vertical;
+  min-height: 84px;
+}
+
+.prisme-capture-panel {
+  margin-top: 0.78rem;
+  border: 1px solid rgba(235, 141, 163, 0.26);
+  border-radius: 12px;
+  background: rgba(22, 8, 13, 0.66);
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.44rem;
+}
+
+.prisme-capture-panel h3 {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.prisme-capture-panel p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.79rem;
+}
+
+.prisme-capture-panel label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--ink-muted);
+  font-size: 0.77rem;
+}
+
+.prisme-capture-panel input,
+.prisme-capture-panel textarea {
+  background: rgba(13, 8, 10, 0.82);
+  color: var(--foreground);
+  border: 1px solid rgba(235, 150, 170, 0.34);
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-family: var(--font-plex-mono), monospace;
+  padding: 0.52rem 0.58rem;
+}
+
+.prisme-capture-panel textarea {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.prisme-controls fieldset {
+  margin: 0;
+  border: 1px solid rgba(235, 145, 165, 0.23);
+  border-radius: 11px;
+  padding: 0.46rem 0.55rem 0.58rem;
+}
+
+.prisme-controls legend {
+  color: var(--ink-muted);
+  padding: 0 0.3rem;
+}
+
+.prisme-addons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem 0.72rem;
+}
+
+.prisme-addon-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  font-size: 0.78rem;
+}
+
+.prisme-addon-option input {
+  accent-color: var(--accent);
+}
+
+.prisme-btn {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  padding: 0.58rem 1.05rem;
+  font-size: 0.83rem;
+  font-family: var(--font-plex-mono), monospace;
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+
+.prisme-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.prisme-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.prisme-btn-primary {
+  background: linear-gradient(148deg, var(--accent), var(--accent-strong));
+  color: #ffeef1;
+}
+
+.prisme-btn-ghost {
+  color: #ffd5df;
+  border-color: rgba(233, 145, 167, 0.4);
+  background: rgba(28, 11, 17, 0.54);
+}
+
+.prisme-quote-panel {
+  margin-top: 1rem;
+  border: 1px solid rgba(235, 143, 166, 0.42);
+  background: linear-gradient(180deg, rgba(51, 15, 25, 0.76), rgba(20, 8, 13, 0.86));
+  border-radius: 22px;
+  padding: 1rem;
+}
+
+.prisme-quote-panel h2 {
+  margin: 0;
+  font-size: 1.06rem;
+}
+
+.prisme-quote-meta {
+  margin: 0.45rem 0 0.75rem;
+  color: var(--ink-muted);
+  font-size: 0.86rem;
+}
+
+.prisme-quote-panel ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.prisme-quote-panel li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.prisme-total {
+  margin-top: 0.8rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(238, 155, 175, 0.34);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.prisme-total strong {
+  font-size: 1.17rem;
+}
+
+.prisme-cta-row {
+  margin-top: 0.9rem;
+  display: flex;
+  gap: 0.52rem;
+  flex-wrap: wrap;
+}
+
+.prisme-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  background: rgba(8, 4, 6, 0.78);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.prisme-modal-card {
+  width: min(96vw, 440px);
+  border: 1px solid rgba(236, 152, 173, 0.4);
+  border-radius: 18px;
+  background: linear-gradient(190deg, rgba(35, 12, 19, 0.95), rgba(16, 7, 11, 0.98));
+  box-shadow: var(--shadow);
+  padding: 1.1rem;
+}
+
+.prisme-modal-card h3 {
+  margin: 0;
+}
+
+.prisme-modal-card p {
+  margin: 0.42rem 0 0.72rem;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+}
+
+.prisme-modal-actions {
+  margin-top: 0.7rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.prisme-error {
+  margin: 0.42rem 0 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+.prisme-shell.intro-engaged .prisme-stage-pulse {
+  opacity: 0.5;
+}
+
+.prisme-reveal .prisme-grid {
+  transition-delay: 80ms;
+}
+
+.prisme-reveal .prisme-quote-panel {
+  transition-delay: 150ms;
+}
+
+@keyframes prismePulseOuter {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.52;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.82;
+  }
+}
+
+@keyframes prismePulseMid {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.95;
+  }
+}
+
+@keyframes prismePulseInner {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.74;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+}
+
+@keyframes prismeDrift {
+  0% {
+    transform: rotate(0deg) scale(0.96);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.02);
+  }
+  100% {
+    transform: rotate(360deg) scale(0.96);
+  }
+}
+
+@keyframes prismePulseDot {
+  0%,
+  100% {
+    transform: scale(0.88);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 980px) {
+  .prisme-panel {
+    grid-column: span 12;
+  }
+}
+
+@media (max-width: 700px) {
+  .prisme-content {
+    padding-top: 0;
+  }
+
+  .prisme-header h1 {
+    letter-spacing: 0.015em;
+  }
+
+  .prisme-stage-core {
+    width: min(62vw, 280px);
+  }
+
+  .prisme-btn,
+  .prisme-price,
+  .prisme-controls select,
+  .prisme-controls textarea,
+  .prisme-modal-card input {
+    font-size: 0.84rem;
+  }
 }
