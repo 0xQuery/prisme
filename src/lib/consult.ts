@@ -58,6 +58,7 @@ interface AiConsultDecision {
   timelineMode?: TimelineMode;
   addOnIds?: QuoteAddOnId[];
   assistantMessage?: string;
+  readyToQuote?: boolean;
 }
 
 interface ResolveConsultResult {
@@ -133,22 +134,92 @@ function buildDeterministicAssistantMessage(args: {
   ].join(" ");
 }
 
+function buildProbingAssistantMessage(args: {
+  packageName: string;
+  timelineMode: TimelineMode;
+  addOnNames: string[];
+}): string {
+  const timelineLabel = args.timelineMode === "RUSH" ? "rush timeline" : "standard timeline";
+  const addOnHint =
+    args.addOnNames.length > 0
+      ? `I also noted ${args.addOnNames.join(", ")}.`
+      : "I can keep this lean unless you want integrations or analytics included.";
+
+  return [
+    `I am currently shaping this as ${args.packageName} on a ${timelineLabel}.`,
+    addOnHint,
+    "Before I prepare pricing, what outcome metric matters most and what constraints (deadline, team availability, or budget guardrail) should I honor?",
+  ].join(" ");
+}
+
+function hasExplicitQuoteRequest(message: string): boolean {
+  const lowered = message.toLowerCase();
+  return [
+    "quote",
+    "estimate",
+    "price",
+    "pricing",
+    "cost",
+    "budget",
+    "proposal",
+  ].some((keyword) => lowered.includes(keyword));
+}
+
+function hasDiscoverySignals(message: string): boolean {
+  const lowered = message.toLowerCase();
+  const words = lowered.split(/\s+/).filter(Boolean).length;
+  const signalCount = [
+    /\b(by|deadline|timeline|week|month|quarter|asap|urgent|rush)\b/.test(lowered),
+    /\b(user|customer|buyer|sales|ops|team|support|marketing|audience)\b/.test(lowered),
+    /\b(lead|conversion|pipeline|revenue|onboarding|churn|throughput|latency)\b/.test(lowered),
+    /\b(site|landing|mvp|app|automation|workflow|integration|crm)\b/.test(lowered),
+    /\b(constraint|budget|risk|compliance|security)\b/.test(lowered),
+  ].filter(Boolean).length;
+
+  return words >= 16 || signalCount >= 2;
+}
+
+function shouldQuoteNow(args: {
+  message: string;
+  userTurns: number;
+  remainingTurns: number;
+  aiReadyToQuote: boolean;
+}): boolean {
+  if (hasExplicitQuoteRequest(args.message)) {
+    return true;
+  }
+
+  if (args.remainingTurns <= 1) {
+    return true;
+  }
+
+  if (args.aiReadyToQuote && args.userTurns >= 2) {
+    return true;
+  }
+
+  return args.userTurns >= 3 && hasDiscoverySignals(args.message);
+}
+
 async function generateAiDecision(args: {
   userMessage: string;
   existingAnswers: StructuredAnswers;
   turnIndex: number;
 }): Promise<AiConsultDecision | null> {
   const prompt = [
-    "You are prisme, an AI quoting concierge for fixed-fee software services.",
+    "You are prisme, an invite-only AI advisor for premium fixed-fee software services.",
+    "Your job is discovery-first: probe for business context before quoting.",
     "Choose one package and optional add-ons from these IDs only:",
     `Packages: ${PACKAGE_IDS.join(", ")}`,
     `Add-ons: ${ADD_ON_IDS.join(", ")}`,
     "Timeline modes: STANDARD or RUSH.",
-    "Prioritize concise, professional language. No hype.",
+    "Set readyToQuote=true only if the user has provided enough context for outcome + constraints + timeline, or clearly asks for a quote.",
+    "If not ready to quote, assistantMessage must be one concise probing question.",
+    "Never use salesy language and never mention internal heuristics.",
+    "Keep wording calm, direct, and premium.",
     `User message: ${args.userMessage}`,
     `Existing answers JSON: ${JSON.stringify(args.existingAnswers)}`,
     `Conversation turn index (1-based): ${args.turnIndex}`,
-    'Return strict JSON: {"packageId":"...","timelineMode":"STANDARD|RUSH","addOnIds":["..."],"assistantMessage":"..."}',
+    'Return strict JSON: {"packageId":"...","timelineMode":"STANDARD|RUSH","addOnIds":["..."],"readyToQuote":true|false,"assistantMessage":"..."}',
   ].join("\n");
 
   return generateGeminiJson<AiConsultDecision>(prompt);
@@ -173,6 +244,9 @@ function normalizeAiDecision(decision: AiConsultDecision | null): AiConsultDecis
   }
   if (typeof decision.assistantMessage === "string") {
     normalized.assistantMessage = decision.assistantMessage.trim();
+  }
+  if (typeof decision.readyToQuote === "boolean") {
+    normalized.readyToQuote = decision.readyToQuote;
   }
 
   return normalized;
@@ -242,15 +316,36 @@ export async function resolveConsultTurn(args: {
   const packageName =
     PACKAGE_OPTIONS.find((item) => item.id === packageId)?.name ?? packageId;
 
-  const assistantMessage =
-    aiDecision.assistantMessage && aiDecision.assistantMessage.length > 0
-      ? aiDecision.assistantMessage
-      : buildDeterministicAssistantMessage({
-          packageName,
-          timelineMode,
-          addOnNames: getAddOnNames(addOnIds),
-          quote: result.quote,
-        });
+  const userTurns = args.session.messages.filter((item) => item.role === "user").length;
+  const quoteNow = shouldQuoteNow({
+    message: args.userMessage,
+    userTurns,
+    remainingTurns: args.session.remainingTurns,
+    aiReadyToQuote: aiDecision.readyToQuote === true,
+  });
+
+  if (!quoteNow) {
+    const probingMessage =
+      aiDecision.assistantMessage && aiDecision.assistantMessage.length > 0
+        ? aiDecision.assistantMessage
+        : buildProbingAssistantMessage({
+            packageName,
+            timelineMode,
+            addOnNames: getAddOnNames(addOnIds),
+          });
+
+    return {
+      assistantMessage: probingMessage,
+      resolvedAnswers,
+    };
+  }
+
+  const assistantMessage = buildDeterministicAssistantMessage({
+    packageName,
+    timelineMode,
+    addOnNames: getAddOnNames(addOnIds),
+    quote: result.quote,
+  });
 
   return {
     assistantMessage,
@@ -258,4 +353,3 @@ export async function resolveConsultTurn(args: {
     quote: result.quote,
   };
 }
-

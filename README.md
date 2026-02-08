@@ -5,7 +5,7 @@
 - Layer 2 invite-gated live consult
 - Deterministic fixed-fee quote engine
 - Mars/prism animated background that freezes 1 second after first chat interaction
-- Cost controls (3 turns max, daily AI budget fallback)
+- Cost controls (10 turns max, daily AI budget fallback)
 
 ## Stack
 - Next.js App Router + TypeScript
@@ -49,7 +49,7 @@ Default invite code (if unchanged): `PRISME-DEMO`.
 
 ## Cost Guardrails
 - No model calls before invite gate is passed.
-- Max 3 consult turns per session.
+- Max 10 consult turns per session.
 - Daily AI budget cap enforced with fallback to capture mode.
 - Invite/session/IP rate limits on API routes.
 

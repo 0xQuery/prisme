@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
     }
 
     const assistantMessage =
-      "I can scope this quickly. Tell me what outcome you need, and I will return a fixed-fee quote with assumptions and timeline.";
+      "Tell me the core business problem you want solved, who it impacts most, and what outcome would make this an obvious win.";
     session.messages.push({
       role: "assistant",
       content: assistantMessage,
@@ -79,4 +79,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

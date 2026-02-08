@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
       createdAtIso: new Date().toISOString(),
     });
 
-    updateSessionState(session, "COMPLETED");
+    updateSessionState(session, resolved.quote ? "COMPLETED" : "ACTIVE");
 
     return NextResponse.json({
       ok: true,
@@ -189,4 +189,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

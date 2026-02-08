@@ -32,8 +32,8 @@ export async function POST(request: NextRequest) {
       turnstileToken?: string;
     };
 
-    const inviteCode = body.inviteCode?.trim() ?? "";
-    if (!inviteCode) {
+    const inviteCodeRaw = body.inviteCode?.trim() ?? "";
+    if (!inviteCodeRaw) {
       return NextResponse.json(
         {
           ok: false,
@@ -62,6 +62,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const inviteCode = inviteCodeRaw.toLowerCase();
+
     if (!runtime.inviteCodes.includes(inviteCode)) {
       return NextResponse.json(
         {
@@ -74,7 +76,7 @@ export async function POST(request: NextRequest) {
     }
 
     const session = createSession({
-      inviteCode,
+      inviteCode: inviteCodeRaw,
       clientIp: ip,
     });
 

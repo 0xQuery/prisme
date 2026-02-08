@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  CSSProperties,
   FormEvent,
+  PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -19,7 +19,6 @@ import {
   PublicConsultConfig,
   QuoteBreakdown,
   QuoteSessionState,
-  StructuredAnswers,
 } from "@/lib/types";
 
 interface ApiErrorResponse {
@@ -30,7 +29,7 @@ interface ApiErrorResponse {
 
 const FALLBACK_CONFIG: PublicConsultConfig = {
   appName: "prisme",
-  maxTurns: 3,
+  maxTurns: 10,
   inviteOnlyLabel: "Live consult is invite-only.",
   rushAvailabilityLabel: "Rush available in Busy or At-Capacity weeks.",
   rushEnabledInNormal: false,
@@ -43,6 +42,14 @@ const FALLBACK_CONFIG: PublicConsultConfig = {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function quoteSummaryMessage(quote: QuoteBreakdown): string {
+  return [
+    `Fixed quote ready for ${quote.packageName}.`,
+    `Total ${formatCurrency(quote.totalCents)} valid through ${formatShortDate(quote.validThroughIso)}.`,
+    "Use Book + Deposit to lock kickoff.",
+  ].join(" ");
 }
 
 function buildEmailSummary(quote: QuoteBreakdown): string {
@@ -93,28 +100,23 @@ async function postJson<TRequest, TResponse>(
 
 export function PrismeApp() {
   const [config, setConfig] = useState<PublicConsultConfig>(FALLBACK_CONFIG);
-  const [configLoaded, setConfigLoaded] = useState(false);
   const [engagementState, setEngagementState] = useState<EngagementState>("IDLE");
-  const [introEngaged, setIntroEngaged] = useState(false);
-  const [revealProgress, setRevealProgress] = useState(0);
+  const [hubHovered, setHubHovered] = useState(false);
+  const [centerActivated, setCenterActivated] = useState(false);
   const [sessionState, setSessionState] = useState<QuoteSessionState>("GATED");
   const [messages, setMessages] = useState<ConsultMessage[]>([]);
   const [input, setInput] = useState("");
   const [sessionToken, setSessionToken] = useState("");
-  const [remainingTurns, setRemainingTurns] = useState(FALLBACK_CONFIG.maxTurns);
   const [quote, setQuote] = useState<QuoteBreakdown | undefined>(undefined);
   const [inviteCode, setInviteCode] = useState("");
   const [inviteError, setInviteError] = useState("");
-  const [captureEmail, setCaptureEmail] = useState("");
-  const [captureDetails, setCaptureDetails] = useState("");
   const [gateVisible, setGateVisible] = useState(false);
   const [busyState, setBusyState] = useState<"IDLE" | "VERIFYING" | "SENDING">("IDLE");
-  const [answerState, setAnswerState] = useState<StructuredAnswers>({
-    timelineMode: "STANDARD",
-    addOnIds: [],
-  });
 
   const freezeTimerRef = useRef<number | null>(null);
+  const accessInputRef = useRef<HTMLInputElement | null>(null);
+  const firstInteractionHandledRef = useRef(false);
+  const centerActivationHandledRef = useRef(false);
 
   const trackEvent = useCallback(
     async (
@@ -149,18 +151,16 @@ export function PrismeApp() {
           ok: boolean;
           config?: PublicConsultConfig;
         };
+
         if (!isMounted) {
           return;
         }
 
         if (data.ok && data.config) {
           setConfig(data.config);
-          setRemainingTurns(data.config.maxTurns);
         }
-      } finally {
-        if (isMounted) {
-          setConfigLoaded(true);
-        }
+      } catch {
+        return;
       }
     }
 
@@ -176,71 +176,101 @@ export function PrismeApp() {
   }, [trackEvent]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const engage = () => setIntroEngaged(true);
-    const onScroll = () => {
-      const viewportHeight = window.innerHeight || 1;
-      const rawProgress = (window.scrollY - viewportHeight * 0.1) / (viewportHeight * 0.9);
-      const boundedProgress = Math.min(1, Math.max(0, rawProgress));
-      setRevealProgress(boundedProgress);
-
-      if (window.scrollY > 28) {
-        setIntroEngaged(true);
-      }
-    };
-
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("wheel", engage, { passive: true });
-    window.addEventListener("touchstart", engage, { passive: true });
-    window.addEventListener("pointerdown", engage);
-    window.addEventListener("keydown", engage);
-
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("wheel", engage);
-      window.removeEventListener("touchstart", engage);
-      window.removeEventListener("pointerdown", engage);
-      window.removeEventListener("keydown", engage);
-    };
+    setCenterActivated(false);
+    setHubHovered(false);
+    firstInteractionHandledRef.current = false;
+    centerActivationHandledRef.current = false;
   }, []);
 
-  const registerFirstChatInteraction = useCallback(() => {
-    if (engagementState !== "IDLE") {
+  useEffect(() => {
+    if (!gateVisible) {
       return;
     }
+
+    const focusTimer = window.setTimeout(() => {
+      accessInputRef.current?.focus();
+    }, 220);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+    };
+  }, [gateVisible]);
+
+  const registerFirstChatInteraction = useCallback(() => {
+    if (firstInteractionHandledRef.current || engagementState !== "IDLE") {
+      return;
+    }
+    firstInteractionHandledRef.current = true;
 
     setEngagementState("ENGAGED_PENDING_FREEZE");
     trackEvent("chat_first_interaction");
+
     freezeTimerRef.current = window.setTimeout(() => {
       setEngagementState("FROZEN");
       trackEvent("background_frozen");
     }, 1000);
   }, [engagementState, trackEvent]);
 
-  const canSendMessage = useMemo(() => {
-    return (
-      sessionState === "ACTIVE" &&
-      sessionToken.length > 0 &&
-      busyState === "IDLE" &&
-      input.trim().length > 0
-    );
-  }, [busyState, input, sessionState, sessionToken]);
-
   const handleOpenGate = useCallback(() => {
+    setCenterActivated(true);
     setGateVisible(true);
     setInviteError("");
     trackEvent("chat_gate_opened");
   }, [trackEvent]);
 
+  const handleActivationHover = useCallback(() => {
+    if (centerActivationHandledRef.current) {
+      return;
+    }
+    centerActivationHandledRef.current = true;
+
+    setCenterActivated(true);
+    setHubHovered(true);
+    registerFirstChatInteraction();
+  }, [registerFirstChatInteraction]);
+
+  const canActivateFromHover = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) =>
+      !centerActivated && event.pointerType === "mouse",
+    [centerActivated],
+  );
+
+  const handleActivationEnter = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!canActivateFromHover(event)) {
+        return;
+      }
+
+      handleActivationHover();
+    },
+    [canActivateFromHover, handleActivationHover],
+  );
+
+  const handleActivationMove = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!canActivateFromHover(event)) {
+        return;
+      }
+
+      handleActivationHover();
+    },
+    [canActivateFromHover, handleActivationHover],
+  );
+
+  const handleActivationPress = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.pointerType === "touch" || event.pointerType === "pen") {
+        handleActivationHover();
+      }
+    },
+    [handleActivationHover],
+  );
+
   const handleVerifyInvite = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       if (!inviteCode.trim()) {
-        setInviteError("Enter an invite code.");
+        setInviteError("Enter your private access code.");
         return;
       }
 
@@ -260,10 +290,9 @@ export function PrismeApp() {
         setGateVisible(false);
         setMessages([]);
         setQuote(undefined);
-        setRemainingTurns(config.maxTurns);
 
         const startResponse = await postJson<
-          { sessionToken: string; initialIntent?: string },
+          { sessionToken: string },
           {
             ok: boolean;
             sessionState: QuoteSessionState;
@@ -272,11 +301,9 @@ export function PrismeApp() {
           }
         >("/api/consult/start", {
           sessionToken: verifyResponse.sessionToken,
-          initialIntent: answerState.primaryGoal ?? undefined,
         });
 
         setSessionState(startResponse.sessionState);
-        setRemainingTurns(startResponse.remainingTurns);
         setMessages([
           {
             role: "assistant",
@@ -291,18 +318,32 @@ export function PrismeApp() {
         setBusyState("IDLE");
       }
     },
-    [answerState.primaryGoal, config.maxTurns, inviteCode, trackEvent],
+    [inviteCode, trackEvent],
   );
+
+  const isUnlocked = sessionToken.length > 0 && sessionState !== "GATED";
+  const isHubVisible = centerActivated || gateVisible;
+  const isAccessRevealOpen = gateVisible && !isUnlocked;
+  const isExpanded =
+    input.trim().length > 0 || messages.length > 0 || busyState === "SENDING";
 
   const handleSubmitMessage = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      if (!canSendMessage) {
+      setCenterActivated(true);
+      setHubHovered(true);
+
+      if (!isUnlocked) {
+        handleOpenGate();
+        return;
+      }
+
+      const userMessage = input.trim();
+      if (!userMessage) {
         return;
       }
 
       registerFirstChatInteraction();
-      const userMessage = input.trim();
       setInput("");
       setBusyState("SENDING");
 
@@ -318,7 +359,7 @@ export function PrismeApp() {
           {
             sessionToken: string;
             userMessage: string;
-            answers: StructuredAnswers;
+            answers: Record<string, never>;
           },
           {
             ok: boolean;
@@ -330,7 +371,7 @@ export function PrismeApp() {
         >("/api/consult/turn", {
           sessionToken,
           userMessage,
-          answers: answerState,
+          answers: {},
         });
 
         const assistantPayload: ConsultMessage = {
@@ -339,22 +380,26 @@ export function PrismeApp() {
           createdAtIso: nowIso(),
         };
 
-        setMessages((current) => [...current, assistantPayload]);
         setSessionState(response.sessionState);
-        setRemainingTurns(response.remainingTurns);
-
         if (response.sessionState === "BUDGET_FALLBACK") {
           trackEvent("budget_fallback_shown");
         }
 
+        const followupMessages: ConsultMessage[] = [assistantPayload];
         if (response.quote) {
           setQuote(response.quote);
-          setSessionState("COMPLETED");
           trackEvent("quote_generated", {
             packageId: response.quote.packageId,
             totalCents: response.quote.totalCents,
           });
+          followupMessages.push({
+            role: "assistant",
+            content: quoteSummaryMessage(response.quote),
+            createdAtIso: nowIso(),
+          });
         }
+
+        setMessages((current) => [...current, ...followupMessages]);
       } catch (error) {
         const errorPayload: ConsultMessage = {
           role: "assistant",
@@ -369,52 +414,21 @@ export function PrismeApp() {
         setBusyState("IDLE");
       }
     },
-    [answerState, canSendMessage, input, registerFirstChatInteraction, sessionToken, trackEvent],
+    [handleOpenGate, input, isUnlocked, registerFirstChatInteraction, sessionToken, trackEvent],
   );
 
   const quoteMailto = useMemo(() => {
     if (!quote) {
       return "#";
     }
+
     const subject = encodeURIComponent("prisme fixed-fee estimate");
     const body = encodeURIComponent(buildEmailSummary(quote));
     return `mailto:?subject=${subject}&body=${body}`;
   }, [quote]);
 
-  const captureMailto = useMemo(() => {
-    const subject = encodeURIComponent("prisme consult capture");
-    const body = encodeURIComponent(
-      [
-        `Contact email: ${captureEmail || "not provided"}`,
-        "",
-        "Project details:",
-        captureDetails || "No details provided yet.",
-      ].join("\n"),
-    );
-    return `mailto:?subject=${subject}&body=${body}`;
-  }, [captureDetails, captureEmail]);
-
-  const rushDisabled = config.defaultCapacityLevel === "NORMAL" && !config.rushEnabledInNormal;
-  const title = configLoaded ? config.appName : "prisme";
-  const effectiveRevealProgress = introEngaged
-    ? Math.max(revealProgress, 0.16)
-    : revealProgress;
-  const revealStyle = {
-    "--reveal-progress": effectiveRevealProgress.toFixed(3),
-  } as CSSProperties;
-
-  const handleStageAdvance = useCallback(() => {
-    setIntroEngaged(true);
-    if (typeof window !== "undefined") {
-      window.scrollTo({
-        top: window.innerHeight * 0.72,
-        behavior: "smooth",
-      });
-    }
-  }, []);
-
   return (
-    <div className={`prisme-shell ${introEngaged ? "intro-engaged" : ""}`} style={revealStyle}>
+    <div className="prisme-shell">
       <MarsPrismCanvas
         className="prisme-background"
         engagementState={engagementState}
@@ -424,239 +438,134 @@ export function PrismeApp() {
       <div className="prisme-overlay" />
 
       <main className="prisme-content">
-        <section className="prisme-stage" onPointerDown={() => setIntroEngaged(true)}>
+        <section
+          className={`prisme-chat-hub ${isHubVisible ? "is-armed" : ""} ${
+            hubHovered ? "is-hovered" : ""
+          } ${
+            isExpanded ? "is-expanded" : ""
+          }`}
+          onMouseEnter={() => {
+            if (centerActivated) {
+              setHubHovered(true);
+            }
+          }}
+          onMouseLeave={() => setHubHovered(false)}
+        >
+          <button
+            type="button"
+            className="prisme-activation-zone"
+            aria-label="Activate prisme chat"
+            onPointerEnter={handleActivationEnter}
+            onPointerMove={handleActivationMove}
+            onPointerDown={handleActivationPress}
+          />
+
           <div className="prisme-stage-core" aria-hidden>
             <span className="prisme-stage-ring prisme-stage-ring-outer" />
             <span className="prisme-stage-ring prisme-stage-ring-mid" />
             <span className="prisme-stage-ring prisme-stage-ring-inner" />
             <span className="prisme-stage-drift" />
           </div>
-          <button
-            type="button"
-            className="prisme-stage-pulse"
-            aria-label="Reveal interface"
-            onClick={handleStageAdvance}
+
+          <article
+            className={`prisme-chat-shell ${isHubVisible ? "is-armed" : "is-hidden"} ${
+              isAccessRevealOpen ? "is-gate-open" : ""
+            } ${
+              isExpanded ? "is-expanded" : "is-compact"
+            }`}
+            aria-hidden={!isHubVisible}
           >
-            <span />
-          </button>
-        </section>
-
-        <section className="prisme-reveal">
-          <header className="prisme-header prisme-reveal-item">
-            <p className="prisme-eyebrow">Invite-only AI Consult</p>
-            <h1>{title}</h1>
-            <p className="prisme-subhead">
-              A conversation-first service portal with deterministic fixed-fee pricing.
-            </p>
-            <div className="prisme-actions">
-              <button className="prisme-btn prisme-btn-primary" onClick={handleOpenGate}>
-                Start AI Consult
-              </button>
-              <p className="prisme-invite-note">{config.inviteOnlyLabel}</p>
-            </div>
-          </header>
-
-          <section className="prisme-grid prisme-reveal-item">
-            <article className="prisme-panel">
-              <div className="prisme-panel-head">
-                <h2>Layer 1: Preview</h2>
-                <span>{formatCurrency(0)} AI cost before gate</span>
-              </div>
-              <p className="prisme-panel-copy">
-                Select a likely engagement shape before opening the live consult.
-              </p>
-
-              <div className="prisme-package-list">
-                {config.packageOptions.map((item) => (
-                  <button
-                    key={item.id}
-                    className={`prisme-package ${
-                      answerState.packageId === item.id ? "is-selected" : ""
-                    }`}
-                    onClick={() =>
-                      setAnswerState((current) => ({
-                        ...current,
-                        packageId: item.id,
-                        primaryGoal: current.primaryGoal ?? item.teaser,
-                      }))
-                    }
-                  >
-                    <div>
-                      <h3>{item.name}</h3>
-                      <p>{item.teaser}</p>
-                    </div>
-                    <div className="prisme-price">{formatCurrency(item.basePriceCents)}</div>
+            <div className="prisme-chat-top">
+              <p className="prisme-chat-prompt">How can we help you?</p>
+              <div className="prisme-chat-meta">
+                {!isUnlocked && (
+                  <button type="button" className="prisme-unlock-btn" onClick={handleOpenGate}>
+                    Private Access
                   </button>
-                ))}
+                )}
               </div>
-            </article>
+            </div>
 
-            <article className="prisme-panel">
-              <div className="prisme-panel-head">
-                <h2>Layer 2: Live Consult</h2>
-                <span>{remainingTurns} turns left</span>
-              </div>
-
-              <div className="prisme-chat">
+            {isExpanded && (
+              <div className="prisme-chat-window">
                 {messages.length === 0 ? (
-                  <p className="prisme-chat-empty">
-                    Unlock with invite code, then send one focused message to get a fixed quote.
+                  <p className="prisme-chat-placeholder">
+                    Share your goal, preferred timeline, and constraints.
                   </p>
                 ) : (
                   messages.map((message, index) => (
-                    <div
-                      key={`${message.createdAtIso}-${index}`}
-                      className={`prisme-msg ${message.role}`}
-                    >
+                    <div key={`${message.createdAtIso}-${index}`} className={`prisme-msg ${message.role}`}>
                       <p>{message.content}</p>
                     </div>
                   ))
                 )}
               </div>
+            )}
 
-              <form className="prisme-controls" onSubmit={handleSubmitMessage}>
-                <label>
-                  Service profile
-                  <select
-                    value={answerState.packageId ?? ""}
-                    onChange={(event) =>
-                      setAnswerState((current) => ({
-                        ...current,
-                        packageId: event.target.value
-                          ? (event.target.value as StructuredAnswers["packageId"])
-                          : undefined,
-                      }))
-                    }
-                  >
-                    <option value="">AI should decide</option>
-                    {config.packageOptions.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
-                  Timeline mode
-                  <select
-                    value={answerState.timelineMode ?? "STANDARD"}
-                    onChange={(event) =>
-                      setAnswerState((current) => ({
-                        ...current,
-                        timelineMode: event.target.value as StructuredAnswers["timelineMode"],
-                      }))
-                    }
-                  >
-                    <option value="STANDARD">Standard</option>
-                    <option value="RUSH" disabled={rushDisabled}>
-                      Rush
-                    </option>
-                  </select>
-                </label>
-
-                <fieldset>
-                  <legend>Add-ons</legend>
-                  <div className="prisme-addons">
-                    {config.addOnOptions.map((addOn) => {
-                      const checked = (answerState.addOnIds ?? []).includes(addOn.id);
-                      return (
-                        <label key={addOn.id} className="prisme-addon-option">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(event) =>
-                              setAnswerState((current) => {
-                                const existing = new Set(current.addOnIds ?? []);
-                                if (event.target.checked) {
-                                  existing.add(addOn.id);
-                                } else {
-                                  existing.delete(addOn.id);
-                                }
-                                return {
-                                  ...current,
-                                  addOnIds: Array.from(existing),
-                                };
-                              })
-                            }
-                          />
-                          <span>{addOn.name}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </fieldset>
-
-                <label>
-                  Consult message
-                  <textarea
-                    placeholder="What pain point are you solving and by when?"
-                    value={input}
-                    onFocus={registerFirstChatInteraction}
-                    onKeyDown={registerFirstChatInteraction}
-                    onClick={registerFirstChatInteraction}
-                    onChange={(event) => setInput(event.target.value)}
-                    maxLength={1200}
-                  />
-                </label>
-
+            <form
+              className={`prisme-chat-form ${isAccessRevealOpen ? "is-gate-open" : ""}`}
+              onSubmit={handleSubmitMessage}
+            >
+              <textarea
+                className={`prisme-chat-input ${isExpanded ? "is-expanded" : "is-compact"}`}
+                placeholder={
+                  isUnlocked
+                    ? "Describe your project need"
+                    : "Enter your project need to begin"
+                }
+                value={input}
+                onFocus={() => {
+                  setHubHovered(true);
+                  registerFirstChatInteraction();
+                }}
+                onClick={() => setHubHovered(true)}
+                onKeyDown={() => setHubHovered(true)}
+                onChange={(event) => setInput(event.target.value)}
+                maxLength={1200}
+              />
+              {!isAccessRevealOpen && (
                 <button
-                  className="prisme-btn prisme-btn-primary"
+                  className="prisme-chat-send"
                   type="submit"
-                  disabled={!canSendMessage}
+                  disabled={busyState === "SENDING" || input.trim().length === 0}
                 >
-                  {busyState === "SENDING" ? "Processing..." : "Generate Quote"}
+                  {busyState === "SENDING" ? "Processing..." : isUnlocked ? "Send" : "Enter"}
+                </button>
+              )}
+            </form>
+
+            <section
+              className={`prisme-access-reveal ${isAccessRevealOpen ? "is-open" : ""}`}
+              aria-hidden={!isAccessRevealOpen}
+            >
+              <form className="prisme-access-form" onSubmit={handleVerifyInvite}>
+                <input
+                  ref={accessInputRef}
+                  type="text"
+                  value={inviteCode}
+                  placeholder="Access code"
+                  onChange={(event) => setInviteCode(event.target.value)}
+                />
+                <button
+                  type="submit"
+                  className="prisme-btn prisme-btn-primary"
+                  disabled={busyState === "VERIFYING"}
+                >
+                  {busyState === "VERIFYING" ? "Verifying..." : "Enter"}
+                </button>
+                <button
+                  type="button"
+                  className="prisme-btn prisme-btn-ghost"
+                  onClick={() => setGateVisible(false)}
+                >
+                  Cancel
                 </button>
               </form>
+              {inviteError && <p className="prisme-error">{inviteError}</p>}
+            </section>
 
-              {sessionState === "BUDGET_FALLBACK" && (
-                <div className="prisme-capture-panel">
-                  <h3>Capture mode is active</h3>
-                  <p>Live AI reached today’s budget cap. Send your details for manual fixed-fee response.</p>
-                  <label>
-                    Contact email
-                    <input
-                      type="email"
-                      value={captureEmail}
-                      onChange={(event) => setCaptureEmail(event.target.value)}
-                      placeholder="you@company.com"
-                    />
-                  </label>
-                  <label>
-                    Project details
-                    <textarea
-                      value={captureDetails}
-                      onChange={(event) => setCaptureDetails(event.target.value)}
-                      placeholder="Scope, goals, timeline, and constraints."
-                    />
-                  </label>
-                  <a href={captureMailto} className="prisme-btn prisme-btn-ghost">
-                    Send Capture Details
-                  </a>
-                </div>
-              )}
-            </article>
-          </section>
-
-          {quote && (
-            <section className="prisme-quote-panel prisme-reveal-item">
-              <h2>Fixed Quote Output</h2>
-              <p className="prisme-quote-meta">
-                {quote.packageName} · Valid through {formatShortDate(quote.validThroughIso)}
-              </p>
-              <ul>
-                {quote.lineItems.map((item) => (
-                  <li key={item.id}>
-                    <span>{item.label}</span>
-                    <span>{formatCurrency(item.amountCents)}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="prisme-total">
-                <span>Total</span>
-                <strong>{formatCurrency(quote.totalCents)}</strong>
-              </div>
-              <div className="prisme-cta-row">
+            {quote && (
+              <div className="prisme-chat-cta-row">
                 <a
                   href={config.depositUrl}
                   target="_blank"
@@ -679,44 +588,10 @@ export function PrismeApp() {
                   Email Estimate
                 </a>
               </div>
-            </section>
-          )}
+            )}
+          </article>
         </section>
       </main>
-
-      {gateVisible && (
-        <div className="prisme-modal" role="dialog" aria-modal="true">
-          <div className="prisme-modal-card">
-            <h3>Unlock live consult</h3>
-            <p>Use your invite code to activate the AI session.</p>
-            <form onSubmit={handleVerifyInvite}>
-              <input
-                type="text"
-                value={inviteCode}
-                placeholder="Enter invite code"
-                onChange={(event) => setInviteCode(event.target.value)}
-              />
-              {inviteError && <p className="prisme-error">{inviteError}</p>}
-              <div className="prisme-modal-actions">
-                <button
-                  type="button"
-                  className="prisme-btn prisme-btn-ghost"
-                  onClick={() => setGateVisible(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="prisme-btn prisme-btn-primary"
-                  disabled={busyState === "VERIFYING"}
-                >
-                  {busyState === "VERIFYING" ? "Verifying..." : "Unlock"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

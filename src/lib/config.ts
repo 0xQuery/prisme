@@ -6,7 +6,7 @@ import {
 } from "@/lib/types";
 
 export const APP_NAME = "prisme";
-export const MAX_AI_TURNS = 3;
+export const MAX_AI_TURNS = 10;
 export const QUOTE_VALIDITY_DAYS = 7;
 export const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 
@@ -119,16 +119,19 @@ function parseCapacityLevel(value: string | undefined): CapacityLevel {
 }
 
 function parseInviteCodes(raw: string | undefined): string[] {
+  const normalizeCode = (code: string) => code.trim().toLowerCase();
+  const fallbackCodes = ["prisme-demo"];
+
   if (!raw) {
-    return ["PRISME-DEMO"];
+    return fallbackCodes;
   }
 
   const codes = raw
     .split(",")
-    .map((entry) => entry.trim())
+    .map((entry) => normalizeCode(entry))
     .filter(Boolean);
 
-  return codes.length > 0 ? codes : ["PRISME-DEMO"];
+  return codes.length > 0 ? codes : fallbackCodes;
 }
 
 export function getServerRuntimeConfig() {

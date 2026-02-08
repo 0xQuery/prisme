@@ -1,10 +1,16 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
+import { Cormorant_Garamond, IBM_Plex_Mono, Manrope } from "next/font/google";
 import "./globals.css";
 
-const headingFont = Space_Grotesk({
-  variable: "--font-heading",
+const baseFont = Manrope({
+  variable: "--font-base",
   subsets: ["latin"],
+});
+
+const displayFont = Cormorant_Garamond({
+  variable: "--font-display",
+  subsets: ["latin"],
+  weight: ["500", "600"],
 });
 
 const monoFont = IBM_Plex_Mono({
@@ -26,7 +32,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${headingFont.variable} ${monoFont.variable} antialiased`}>
+      <body
+        className={`${baseFont.variable} ${displayFont.variable} ${monoFont.variable} antialiased`}
+      >
         {children}
       </body>
     </html>
